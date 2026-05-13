@@ -1,0 +1,73 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 设置 Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: 安装系统依赖
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq build-essential git zip unzip openjdk-17-jdk \
+          autoconf libtool pkg-config zlib1g-dev libncurses5-dev \
+          libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev libltdl-dev
+
+    - name: 安装 buildozer
+      run: pip install buildozer cython virtualenv
+
+    - name: 设置 JAVA_HOME
+      run: echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+
+    - name: 缓存 buildozer 依赖
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.buildozer/android/platform
+        key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: buildozer-${{ runner.os }}-
+
+    - name: 修补 p4a 配方
+      run: |
+        buildozer android debug || true
+        RECIPE_SSL=".buildozer/android/platform/python-for-android/pythonforandroid/recipes/openssl/__init__.py"
+        if [ -f "$RECIPE_SSL" ]; then
+          sed -i 's|https://www.openssl.org/source/|https://mirrors.tuna.tsinghua.edu.cn/openssl/source/|g' "$RECIPE_SSL"
+        fi
+        RECIPE_IMG=".buildozer/android/platform/python-for-android/pythonforandroid/recipes/sdl2_image/__init__.py"
+        if [ -f "$RECIPE_IMG" ]; then
+          sed -i 's/--recursive//' "$RECIPE_IMG"
+        fi
+        rm -rf .buildozer/android/platform/build-*
+
+    - name: 打包 APK
+      run: buildozer android debug
+
+    - name: 上传 APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: audio-extractor-apk
+        path: bin/*.apk
+
+    - name: 创建 Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.1.0
+        name: 音频提取器 v1.1.0
+        files: bin/*.apk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
